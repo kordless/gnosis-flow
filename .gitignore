@@ -1,1 +1,5 @@
 .gnosis-flow
+__pycache__/
+build/
+dist/
+*.egg-info/

@@ -1,3 +1,0 @@
-[console_scripts]
-gnosis-flow = gnosis_flow.cli:main
-gnosis-flow-mcp = gnosis_flow.mcp.gnosis_flow_mcp:mcp.run
