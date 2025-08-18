@@ -1,100 +1,110 @@
-# 🌌 Gnosis-Flow
+# Gnosis Flow
 
-**Gnosis-Flow** is a **real AI orchestration framework** written in Python.  
-It provides a secure, transparent way to coordinate multiple AI agents, manage tasks, persist state, and deploy locally or in the cloud.  
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/release/python-390/)
+[![PyPI version](https://badge.fury.io/py/gnosis-flow.svg)](https://badge.fury.io/py/gnosis-flow)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://travis-ci.org/kordless/gnosis-flow.svg?branch=main)](https://travis-ci.org/kordless/gnosis-flow)
 
-Unlike “theater props” masquerading as enterprise AI, Gnosis-Flow is designed to be:  
-- **Truthful** – every tool backed by real functionality  
-- **Modular** – agents, tasks, workflows, memory, integrations kept clean and composable  
-- **Secure** – no `eval()`, no arbitrary shell exec, no hidden key collection  
-- **Deployable** – runs on your laptop or as a service on Google Cloud Run  
+Gnosis Flow is a powerful, asynchronous file and log watcher that triggers actions based on configurable rules. It's designed to be a flexible and extensible tool for developers to automate tasks and workflows.
 
----
+## Features
 
-## ✨ Features
-- **Agent orchestration** – spawn, list, and coordinate async Python agents  
-- **Task workflows** – run tasks directly or define DAG-style workflows  
-- **Hooks system** – register pre/post hooks for tasks, edits, or workflows  
-- **Memory persistence** – JSON-based storage by default (no SQL); pluggable backends (local files or Google Cloud Storage)  
-- **Neural adapters** – integrate real models via Hugging Face, scikit-learn, or APIs  
-- **CLI-first** – the command-line tool is `flow`  
+*   **Asynchronous Monitoring:** Lightweight and efficient, using an async poll-based approach.
+*   **File and Log Watching:** Monitor directories for file changes and tail log files for new lines.
+*   **Pluggable Actions:** Trigger custom actions, including AI tool calls, shell commands, and notifications.
+*   **Runtime Control:** Add new files and directories to watch at runtime via a local control server.
+*   **Configurable Rules:** Define rules in YAML to match file events and log lines with specific actions.
+*   **CLI Interface:** A simple and intuitive command-line interface for starting, stopping, and managing the monitor.
+*   **Daemon Mode:** Run the monitor as a background process.
 
----
+## Installation
 
-## 🖥️ CLI Usage
+You can install Gnosis Flow from PyPI:
+
 ```bash
-# Initialize a project
-flow init
-
-# Spawn a swarm of agents
-flow agents spawn --count 3 --role "developer"
-
-# Run a task
-flow task run "build a REST API"
-
-# Query memory
-flow memory query "last 10 completed tasks"
-
-# Deploy to Google Cloud Run
-flow deploy cloud
+pip install gnosis-flow
 ```
 
----
+Or, for development, you can install it from the source directory:
 
-## 📂 Project Structure
-```
-gnosis_flow/
-├── cli/             # CLI commands (typer)
-├── core/            # Agents, tasks, workflows
-├── memory/          # JSON store + GCS adapter
-├── neural/          # Real ML/LLM integrations
-├── hooks/           # Hook registry
-├── integrations/    # External service adapters
-└── docs/            # Documentation
+```bash
+git clone https://github.com/kordless/gnosis-flow.git
+cd gnosis-flow
+pip install -e .
 ```
 
----
+## Quick Start
 
-## 📦 Storage
-- **Local**: JSON files under `.gnosis/`  
-- **Cloud**: Google Cloud Storage bucket for persistence when running on Cloud Run  
+1.  **Install the dependencies:**
 
----
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-## 🚀 Deployment
-- **Local**: run `flow start` to launch locally with JSON storage  
-- **Cloud**: build and push Docker image → deploy to Google Cloud Run with `flow deploy cloud`  
+2.  **Start the monitor in the current directory:**
 
----
+    ```bash
+    gnosis-flow start --dir .
+    ```
 
-## 🛠️ Development Tasks
+    This will create a `.gnosis-flow/` directory in your project and start the control server on `127.0.0.1:8765`.
 
-### Phase 1 – Core Framework
-- [ ] Agent class with async task loop  
-- [ ] SwarmManager (spawn, list, terminate agents)  
-- [ ] JSON memory store (read/write tasks, logs)  
-- [ ] CLI scaffold with `typer`  
+3.  **In another terminal, you can now interact with the monitor:**
 
-### Phase 2 – Workflows & Hooks
-- [ ] Task object (status, metadata)  
-- [ ] Workflow DAG executor (via `networkx`)  
-- [ ] Hook system (pre/post task, pre/post edit)  
+    *   **Add a log file to watch:**
 
-### Phase 3 – Neural Adapters
-- [ ] Hugging Face integration (text inference)  
-- [ ] Scikit-learn example models (classification/regression)  
-- [ ] Optional API integrations (OpenAI/Anthropic)  
+        ```bash
+        gnosis-flow add-log ./app.log
+        ```
 
-### Phase 4 – Cloud Integration
-- [ ] Google Cloud Storage adapter for memory  
-- [ ] Google Cloud Run deploy commands in CLI  
+    *   **Add a directory to watch:**
 
-### Phase 5 – Production Hardening
-- [ ] Auth & config management  
-- [ ] Logging & metrics  
-- [ ] Documentation & examples  
+        ```bash
+        gnosis-flow add-watch ./another/dir
+        ```
 
----
+    *   **Check the status of the monitor:**
 
-## ⚖️ License
-MIT License.  
+        ```bash
+        gnosis-flow status
+        ```
+
+    *   **Stop the monitor:**
+
+        ```bash
+        gnosis-flow stop
+        ```
+
+## Usage
+
+The `gnosis-flow` command-line interface provides the following commands:
+
+*   `start`: Start the monitor.
+*   `stop`: Stop the monitor.
+*   `status`: Get the status of the monitor.
+*   `add-log`: Add a log file to watch.
+*   `add-watch`: Add a directory to watch.
+
+For more information on each command, you can use the `--help` flag:
+
+```bash
+gnosis-flow start --help
+```
+
+## Configuration
+
+Gnosis Flow is configured using a `rules.yaml` file located in the `.gnosis-flow/` directory. This file is automatically created when you start the monitor for the first time.
+
+The `rules.yaml` file allows you to define rules that match file events and log lines with specific actions. Here's an example of a rule that triggers a shell command when a Python file is modified:
+
+```yaml
+- on: file.modified
+  glob: "**/*.py"
+  action:
+    type: shell
+    command: "echo 'File modified: {{ file_path }}'"
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
