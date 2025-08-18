@@ -6,6 +6,8 @@ import json
 from typing import Any, Dict
 
 from .templating import render_args
+from .ahp_compat import validate_args, ToolError, ValidationError
+from .metrics import increment_tool_usage
 
 
 def action_notify(payload: Dict[str, Any]) -> None:
@@ -27,9 +29,9 @@ def action_ai_tool(payload: Dict[str, Any]) -> None:
 def _get_ahp_registry():
     # Try gnosis-ahp first
     try:
-        from gnosis_ahp.tools.tool_registry import get_global_tool_registry  # type: ignore
+        from gnosis_ahp.tools.tool_registry import get_global_registry  # type: ignore
 
-        return get_global_tool_registry()
+        return get_global_registry()
     except Exception:
         pass
     # Fallback to internal lightweight registry
@@ -53,6 +55,12 @@ def action_ahp_tool(payload: Dict[str, Any]) -> None:
         args = render_args(raw_args, payload)
         reg = _get_ahp_registry()
         tool = reg.get_tool(name)
+        schema = getattr(tool, "get_schema", lambda: {"parameters": {}})()
+        try:
+            args = validate_args(schema, args)
+        except ValidationError as ve:
+            print(f"[ahp_tool] validation error for {name}: {ve}")
+            return
         if tool is None:
             print(f"[ahp_tool] tool not found: {name}")
             return
@@ -65,16 +73,30 @@ def action_ahp_tool(payload: Dict[str, Any]) -> None:
             try:
                 loop = asyncio.get_running_loop()
                 fut = loop.create_task(fn(**args))
-                fut.add_done_callback(lambda f: print(f"[ahp_tool] {name} -> {str(f.result())[:500]}"))
+                def _done(f):
+                    try:
+                        res = f.result()
+                        print(f"[ahp_tool] {name} -> {str(res)[:500]}")
+                        increment_tool_usage(name, True)
+                    except Exception as e:
+                        print(f"[ahp_tool] {name} error: {e}")
+                        increment_tool_usage(name, False)
+                fut.add_done_callback(_done)
             except RuntimeError:
                 # No loop: run synchronously
                 res = asyncio.run(fn(**args))
                 print(f"[ahp_tool] {name} -> {str(res)[:500]}")
+                increment_tool_usage(name, True)
         else:
             res = fn(**args)
             print(f"[ahp_tool] {name} -> {str(res)[:500]}")
+            increment_tool_usage(name, True)
+    except ToolError as te:
+        print(f"[ahp_tool] tool error: {te}")
+        increment_tool_usage(name or "?", False)
     except Exception as e:
         print(f"[ahp_tool] error: {e}")
+        increment_tool_usage(name or "?", False)
 
 
 def dispatch(action: Dict[str, Any], context: Dict[str, Any]) -> None:

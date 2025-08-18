@@ -1,0 +1,27 @@
+# Gnosis Flow configuration template
+# Copy this file to .gnosis-flow/config.yaml in your project root.
+
+# Exclude directory names under each watched root (merged with built-in defaults).
+# Built-in defaults already exclude: .gnosis-flow, .git, node_modules, .venv,
+# __pycache__, .pytest_cache, .mypy_cache, .ruff_cache, .tox, dist, build,
+# .idea, .vscode
+exclude_names:
+  - "__pycache__"
+  - ".pytest_cache"
+  - ".mypy_cache"
+  - ".ruff_cache"
+  - ".tox"
+  - "dist"
+  - "build"
+  - ".idea"
+  - ".vscode"
+  - ".DS_Store"
+
+# Future options (not yet active):
+# tools:
+#   limits:
+#     file.append_line:
+#       max_per_minute: 60
+# rules:
+#   reload: true
+

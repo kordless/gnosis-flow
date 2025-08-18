@@ -75,7 +75,7 @@ rules:
 
   - name: Echo on py change (demo)
     include: ["**/*.py"]
-    regex: "def \\w+\\("
+    regex: 'def \\w+\\('
     action:
       type: ahp_tool
       name: echo.text

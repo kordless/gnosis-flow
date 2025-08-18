@@ -56,6 +56,15 @@ gnosis-flow status
 gnosis-flow stop
 ```
 
+Demo (PowerShell)
+- Run a local demo that creates/modifies/deletes files under the repo so you can see events in the live console:
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\demo.ps1
+```
+
+The script creates a `scratch_demo` directory, writes a file, creates a subdir, deletes both, and exits.
+
 ## Rules
 
 Rules live in `.gnosis-flow/rules.yaml` and are loaded at startup (hot‑reload APIs coming next). The default file includes examples for log ERRORs and a demo tool on `.py` changes.
@@ -114,6 +123,15 @@ Open `http://127.0.0.1:8766/console` to see:
 - JSON expanders to view the full event payload
 
 Use the Pause/Clear/Filter controls to focus on specific paths, rules, or types.
+
+## Config
+
+You can control extra excludes via a small config file. A template is provided at `config.yaml` in this repo.
+
+- Copy it into your project’s state folder: `.gnosis-flow/config.yaml`.
+  - Windows (PowerShell): `Copy-Item .\config.yaml .\.gnosis-flow\config.yaml`
+  - macOS/Linux: `cp config.yaml .gnosis-flow/config.yaml`
+- Currently supports `exclude_names` (merged with built-in defaults like `.git`, `node_modules`, `__pycache__`, etc.).
 
 ## Notes
 

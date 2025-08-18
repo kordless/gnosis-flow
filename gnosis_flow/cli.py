@@ -10,6 +10,8 @@ import typer
 
 
 app = typer.Typer(help="Gnosis Flow Monitor: async file/log watcher with triggerable actions")
+tools_app = typer.Typer(help="Inspect in-process tools (schemas, categories)")
+app.add_typer(tools_app, name="tools")
 
 
 def _send_control_command(cmd: dict, host: str = "127.0.0.1", port: int = 8765, timeout: float = 3.0) -> dict:
@@ -124,3 +126,37 @@ if __name__ == "__main__":
 def main():
     """Entry point for console_scripts."""
     app()
+
+
+@tools_app.command("list")
+def tools_list():
+    """List available tools with name, description, and category."""
+    try:
+        from .ahp_compat import get_global_registry
+        reg = get_global_registry()
+        rows = []
+        for schema in reg.get_schemas():
+            name = schema.get("name")
+            cat = None
+            # find category from registry internal map (best-effort)
+            for c, names in getattr(reg, "categories", {}).items():
+                if name in names:
+                    cat = c
+                    break
+            rows.append({"name": name, "description": schema.get("description", ""), "category": cat or "general"})
+        typer.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+    except Exception as e:
+        typer.echo(json.dumps({"error": str(e)}))
+
+
+@tools_app.command("info")
+def tools_info(name: str):
+    """Show schema for a specific tool."""
+    try:
+        from .ahp_compat import get_global_registry
+        reg = get_global_registry()
+        tool = reg.get_tool(name)
+        schema = getattr(tool, "get_schema", lambda: {} )()
+        typer.echo(json.dumps(schema, indent=2, ensure_ascii=False))
+    except Exception as e:
+        typer.echo(json.dumps({"error": str(e)}))

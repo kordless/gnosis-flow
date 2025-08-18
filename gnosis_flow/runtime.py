@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
 from .rules import load_rules, default_rules_yaml, evaluate_log_line, evaluate_file_text
 from .actions import dispatch
+from .ahp_compat import get_global_registry
 
 
 @dataclass
@@ -254,7 +255,15 @@ class HttpStatusServer:
         except asyncio.IncompleteReadError:
             data = await reader.read(1024)
         first = (data or b"").split(b"\r\n", 1)[0].decode(errors="ignore")
-        method, path, *_ = (first.split(" ") + ["", ""])[:3]
+        method, raw_path, *_ = (first.split(" ") + ["", ""])[:3]
+        path, _, query = raw_path.partition("?")
+        qs = {}
+        if query:
+            for kv in query.split("&"):
+                if not kv:
+                    continue
+                k, _, v = kv.partition("=")
+                qs[k] = v
         handled = False
         if path.startswith("/status"):
             body = json.dumps({
@@ -264,6 +273,91 @@ class HttpStatusServer:
                 "events": self.state.event_count,
                 "lines": self.state.line_count,
             }).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/tools/usage"):
+            try:
+                from .metrics import get_tool_usage
+                body = json.dumps(get_tool_usage()).encode()
+            except Exception:
+                body = json.dumps({}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/tools/") and path.endswith("/schema"):
+            # /tools/<name>/schema
+            try:
+                name = path[len("/tools/"):-len("/schema")].strip("/")
+                from .ahp_compat import get_global_registry
+                reg = get_global_registry()
+                tool = reg.get_tool(name)
+                schema = getattr(tool, "get_schema", lambda: {} )()
+                body = json.dumps(schema).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/tools"):
+            # list schemas
+            try:
+                from .ahp_compat import get_global_registry
+                reg = get_global_registry()
+                schemas = reg.get_schemas()
+                # attach categories
+                cats = getattr(reg, "categories", {})
+                out = []
+                for s in schemas:
+                    nm = s.get("name")
+                    cat = None
+                    for k, v in cats.items():
+                        if nm in v:
+                            cat = k
+                            break
+                    out.append({"name": nm, "description": s.get("description", ""), "category": cat or "general"})
+                body = json.dumps(out).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/events"):
+            # return recent events (last N lines)
+            limit = 200
+            try:
+                limit = int(qs.get("limit", "200"))
+            except Exception:
+                limit = 200
+            lines: List[str] = []
+            try:
+                evp = self.state.events_path
+                if evp and evp.exists():
+                    content = evp.read_text(encoding="utf-8").splitlines()
+                    lines = content[-limit:]
+            except Exception:
+                lines = []
+            body = ("[" + ",".join(lines) + "]").encode()
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/json\r\n"
@@ -421,6 +515,7 @@ main{padding:10px 12px}
 .file{background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.5)}
 .log{background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.4)}
 .hit{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.5)}
+.dir{background:rgba(147,197,253,.12);border:1px solid rgba(147,197,253,.5)}
 .meta{color:var(--muted)}
 .jsonbtn{margin-left:auto}
 details{margin-left:auto}
@@ -435,20 +530,26 @@ CONSOLE_JS = """
   const filter = document.getElementById('filter');
   let paused = false;
   let filterTxt = '';
+  const buf = [];
+
+  function matchesFilter(text, json){
+    if(!filterTxt) return true;
+    const ft = filterTxt.toLowerCase();
+    const hay = (text + ' ' + JSON.stringify(json)).toLowerCase();
+    return hay.includes(ft);
+  }
 
   function row(kind, text, json){
-    if(filterTxt){
-      const ft = filterTxt.toLowerCase();
-      const hay = (text + ' ' + JSON.stringify(json)).toLowerCase();
-      if(!hay.includes(ft)) return;
-    }
+    if(!matchesFilter(text, json)) return;
     const div = document.createElement('div');
     div.className = 'row';
     const badge = document.createElement('span');
     badge.className = 'badge ' + kind;
     badge.textContent = kind.toUpperCase();
     const span = document.createElement('span');
-    span.textContent = text;
+    const ts = json.ts ? new Date(json.ts * 1000) : new Date();
+    const tsStr = ts.toLocaleTimeString();
+    span.textContent = `[${tsStr}] ` + text;
     const det = document.createElement('details');
     const sum = document.createElement('summary');
     sum.textContent = '{ }';
@@ -464,26 +565,52 @@ CONSOLE_JS = """
 
   pauseBtn.onclick = ()=>{ paused = !paused; pauseBtn.textContent = paused? 'Resume' : 'Pause'; };
   clearBtn.onclick = ()=>{ log.innerHTML=''; };
-  filter.oninput = ()=>{ filterTxt = filter.value.trim(); };
+  filter.oninput = ()=>{ filterTxt = filter.value.trim(); renderAll(); };
+
+  function pushEvent(obj){
+    buf.push(obj);
+    renderOne(obj);
+  }
+
+  function renderOne(obj){
+    if(paused) return;
+    if(!obj || !obj.type) return;
+    if(obj.type === 'file_event'){
+      row('file', `${obj.kind} ${obj.path}`, obj);
+    } else if(obj.type === 'dir_event'){
+      const kind = (obj.kind || '').replace('dir_', '');
+      row('dir', `${kind} ${obj.path}`, obj);
+    } else if(obj.type === 'log_line'){
+      row('log', `${obj.path} :: ${obj.line}`, obj);
+    } else if(obj.type === 'rule_hit'){
+      const sim = obj.similarity != null ? ` sim=${obj.similarity}` : '';
+      row('hit', `${obj.rule}${sim} :: ${obj.path}`, obj);
+    } else if(obj.type === 'file_stats'){
+      const extra = (obj.added_lines!=null && obj.deleted_lines!=null) ? ` (+${obj.added_lines}/-${obj.deleted_lines})` : '';
+      row('file', `Δlines=${obj.delta_lines}${extra} rate_5m=${obj.rate_5m} accel_5m=${obj.accel_5m} :: ${obj.path}`, obj);
+    }
+  }
+
+  function renderAll(){
+    log.innerHTML = '';
+    for(const e of buf){ renderOne(e); }
+  }
 
   const es = new EventSource('/stream');
   es.onmessage = (ev)=>{
-    if(paused) return;
     try{
       const obj = JSON.parse(ev.data);
-      if(!obj || !obj.type) return;
-      if(obj.type === 'file_event'){
-        row('file', `${obj.kind} ${obj.path}`, obj);
-      } else if(obj.type === 'log_line'){
-        row('log', `${obj.path} :: ${obj.line}`, obj);
-      } else if(obj.type === 'rule_hit'){
-        const sim = obj.similarity != null ? ` sim=${obj.similarity}` : '';
-        row('hit', `${obj.rule}${sim} :: ${obj.path}`, obj);
-      } else if(obj.type === 'file_stats'){
-        row('file', `Δlines=${obj.delta_lines} rate_5m=${obj.rate_5m} accel_5m=${obj.accel_5m} :: ${obj.path}`, obj);
-      }
+      pushEvent(obj);
     }catch(e){}
   };
+
+  // preload recent events
+  fetch('/events?limit=200').then(r=>r.json()).then(arr=>{
+    if(Array.isArray(arr)){
+      for(const e of arr){ buf.push(e); }
+      renderAll();
+    }
+  }).catch(()=>{});
 })();
 """
 
@@ -550,8 +677,42 @@ class MonitorState:
         self.exclude_prefixes: List[str] = []
         if self.state_dir:
             self.exclude_prefixes.append(str(self.state_dir))
-        # Also exclude .git and node_modules within any watched dir by default
+        # Also exclude common noisy folders within watched roots by default
         # (we'll apply as absolute prefixes when adding watches)
+        self.default_exclude_names: List[str] = [
+            ".git", "node_modules", ".venv", ".gnosis-flow",
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+            "dist", "build", ".idea", ".vscode",
+        ]
+        # Optional config: .gnosis-flow/config.yaml with exclude_names: [ ... ]
+        self.config_path = (self.state_dir / "config.yaml") if self.state_dir else None
+        self.extra_exclude_names: List[str] = []
+        if self.config_path and self.config_path.exists():
+            try:
+                import yaml  # local dependency already present
+                cfg = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
+                self.extra_exclude_names = list(cfg.get("exclude_names", []) or [])
+            except Exception:
+                self.extra_exclude_names = []
+        # Discover built-in tools (lenient)
+        try:
+            reg = get_global_registry()
+            tools_dir = Path(__file__).parent / "ahp_tools"
+            reg.discover_tools(tools_dir, strict=False)
+        except Exception:
+            pass
+        # Event log path
+        self.events_path = (self.state_dir / "events.ndjson") if self.state_dir else None
+
+    def log_event(self, event: Dict[str, Any]) -> None:
+        if not self.events_path:
+            return
+        try:
+            self.events_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.events_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         # Snapshots for line diffing
         self.snapshots_dir = (self.state_dir / "snapshots") if self.state_dir else None
         if self.snapshots_dir:
@@ -589,7 +750,8 @@ class MonitorState:
         # State dir (already absolute)
         excl.extend(self.exclude_prefixes)
         # Common folders under this root
-        for name in (".git", "node_modules", ".venv", ".gnosis-flow"):
+        names = list(set(self.default_exclude_names + self.extra_exclude_names))
+        for name in names:
             cand = os.path.join(p, name)
             excl.append(cand)
         watcher = DirWatcher(p, poll_interval=self.poll_interval, exclude_prefixes=excl)
@@ -622,14 +784,18 @@ class MonitorState:
         if ev.kind in ("dir_created", "dir_deleted"):
             print(f"[dir] {ev.kind.split('_')[1]} {ev.path}")
             try:
-                self.bcast.publish({"type": "dir_event", "path": ev.path, "kind": ev.kind, "ts": ev.ts})
+                evt = {"type": "dir_event", "path": ev.path, "kind": ev.kind, "ts": ev.ts}
+                self.bcast.publish(evt)
+                self.log_event(evt)
             except Exception:
                 pass
             return
 
         print(f"[file] {ev.kind} {ev.path}")
         try:
-            self.bcast.publish({"type": "file_event", "path": ev.path, "kind": ev.kind, "ts": ev.ts})
+            evt = {"type": "file_event", "path": ev.path, "kind": ev.kind, "ts": ev.ts}
+            self.bcast.publish(evt)
+            self.log_event(evt)
         except Exception:
             pass
         # On modify, scan text windows if rules apply
@@ -643,7 +809,9 @@ class MonitorState:
                 for h in hits:
                     dispatch(h.get("action", {}), {"path": str(p), "rule": h.get("rule"), "hit": h})
                     try:
-                        self.bcast.publish({"type": "rule_hit", "path": str(p), "rule": h.get("rule"), **{k: v for k, v in h.items() if k not in ("action",)}})
+                        evt = {"type": "rule_hit", "path": str(p), "rule": h.get("rule"), "ts": time.time(), **{k: v for k, v in h.items() if k not in ("action",)}}
+                        self.bcast.publish(evt)
+                        self.log_event(evt)
                     except Exception:
                         pass
             except Exception:
@@ -712,10 +880,11 @@ class MonitorState:
                 else:
                     print(f"[file] Δlines={lines_changed} rate_5m={rates['rate_5m']} l/m accel_5m={rates['accel_5m']} l/m^2")
                 try:
-                    payload = {"type": "file_stats", "path": ev.path, "delta_lines": lines_changed, **rates}
+                    payload = {"type": "file_stats", "path": ev.path, "delta_lines": lines_changed, "ts": time.time(), **rates}
                     if added_lines is not None and deleted_lines is not None:
                         payload.update({"added_lines": added_lines, "deleted_lines": deleted_lines})
                     self.bcast.publish(payload)
+                    self.log_event(payload)
                 except Exception:
                     pass
 
@@ -724,7 +893,9 @@ class MonitorState:
         line = item.get("line")
         print(f"[log] {path.name}: {line}")
         try:
-            self.bcast.publish({"type": "log_line", "path": str(path), "line": line, "ts": item.get("ts")})
+            evt = {"type": "log_line", "path": str(path), "line": line, "ts": item.get("ts", time.time())}
+            self.bcast.publish(evt)
+            self.log_event(evt)
         except Exception:
             pass
         if self.rules:
@@ -732,7 +903,9 @@ class MonitorState:
             for h in hits:
                 dispatch(h.get("action", {}), {"path": str(path), "rule": h.get("rule"), "hit": h, "line": line})
                 try:
-                    self.bcast.publish({"type": "rule_hit", "path": str(path), "rule": h.get("rule"), **{k: v for k, v in h.items() if k not in ("action",)}})
+                    evt = {"type": "rule_hit", "path": str(path), "rule": h.get("rule"), "ts": time.time(), **{k: v for k, v in h.items() if k not in ("action",)}}
+                    self.bcast.publish(evt)
+                    self.log_event(evt)
                 except Exception:
                     pass
         # Update per-file stats for acceleration (count lines appended)
@@ -774,6 +947,12 @@ def daemonize():
 
 async def run_monitor(initial_dirs: List[str], initial_logs: List[str], host: str, port: int, poll_interval: float, state_dir: Optional[str] = None, http_enabled: bool = False, http_port: int = 8766):
     state = MonitorState(poll_interval=poll_interval, state_dir=state_dir)
+    # Expose state dir for actions/metrics via env
+    try:
+        if state.state_dir:
+            os.environ["GNOSIS_FLOW_STATE_DIR"] = str(state.state_dir)
+    except Exception:
+        pass
     ctrl = ControlServer(host, port, state)
     await ctrl.start()
     http_srv = None
