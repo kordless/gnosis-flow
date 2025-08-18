@@ -1,112 +1,137 @@
 # Gnosis Flow
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/release/python-390/)
-[![PyPI version](https://badge.fury.io/py/gnosis-flow.svg)](https://badge.fury.io/py/gnosis-flow)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://travis-ci.org/kordless/gnosis-flow.svg?branch=main)](https://travis-ci.org/kordless/gnosis-flow)
 
 ![Flow Diagram](flow.png)
 
-Gnosis Flow is a powerful, asynchronous file and log watcher that triggers actions based on configurable rules. It's designed to be a flexible and extensible tool for developers to automate tasks and workflows.
+Gnosis Flow is an async file/log monitor with a live console and in‑process tools. It watches your project, matches events via rules, and triggers actions (e.g., append to a file, echo, future safe edits), all without external services.
 
-## Features
+## Install
 
-*   **Asynchronous Monitoring:** Lightweight and efficient, using an async poll-based approach.
-*   **File and Log Watching:** Monitor directories for file changes and tail log files for new lines.
-*   **Pluggable Actions:** Trigger custom actions, including AI tool calls, shell commands, and notifications.
-*   **Runtime Control:** Add new files and directories to watch at runtime via a local control server.
-*   **Configurable Rules:** Define rules in YAML to match file events and log lines with specific actions.
-*   **CLI Interface:** A simple and intuitive command-line interface for starting, stopping, and managing the monitor.
-*   **Daemon Mode:** Run the monitor as a background process.
-
-## Installation
-
-You can install Gnosis Flow from PyPI:
+PyPI (when published):
 
 ```bash
 pip install gnosis-flow
 ```
 
-Or, for development, you can install it from the source directory:
+From this repo (development):
 
 ```bash
-git clone https://github.com/kordless/gnosis-flow.git
 cd gnosis-flow
 pip install -e .
 ```
 
-## Quick Start
-
-1.  **Install the dependencies:**
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2.  **Start the monitor in the current directory:**
-
-    ```bash
-    gnosis-flow start --dir .
-    ```
-
-    This will create a `.gnosis-flow/` directory in your project and start the control server on `127.0.0.1:8765`.
-
-3.  **In another terminal, you can now interact with the monitor:**
-
-    *   **Add a log file to watch:**
-
-        ```bash
-        gnosis-flow add-log ./app.log
-        ```
-
-    *   **Add a directory to watch:**
-
-        ```bash
-        gnosis-flow add-watch ./another/dir
-        ```
-
-    *   **Check the status of the monitor:**
-
-        ```bash
-        gnosis-flow status
-        ```
-
-    *   **Stop the monitor:**
-
-        ```bash
-        gnosis-flow stop
-        ```
-
-## Usage
-
-The `gnosis-flow` command-line interface provides the following commands:
-
-*   `start`: Start the monitor.
-*   `stop`: Stop the monitor.
-*   `status`: Get the status of the monitor.
-*   `add-log`: Add a log file to watch.
-*   `add-watch`: Add a directory to watch.
-
-For more information on each command, you can use the `--help` flag:
+Optional MCP extras (for the separate MCP connector CLI):
 
 ```bash
-gnosis-flow start --help
+pip install -e .[mcp]
 ```
 
-## Configuration
+## Run
 
-Gnosis Flow is configured using a `rules.yaml` file located in the `.gnosis-flow/` directory. This file is automatically created when you start the monitor for the first time.
+Start in your project directory and enable the HTTP console:
 
-The `rules.yaml` file allows you to define rules that match file events and log lines with specific actions. Here's an example of a rule that triggers a shell command when a Python file is modified:
+```bash
+gnosis-flow start --dir . --http
+```
+
+- First run creates `.gnosis-flow/` and `rules.yaml`. If your repo uses Git, it offers to add `.gnosis-flow` to `.gitignore`.
+- Control server: `127.0.0.1:8765`
+- Live console (SSE): `http://127.0.0.1:8766/console`
+- JSON status: `http://127.0.0.1:8766/status`
+
+Expose on your network (optional):
+
+```bash
+gnosis-flow start --dir . --http --host 0.0.0.0 --http-port 8766
+```
+
+Runtime control (in another terminal):
+
+```bash
+gnosis-flow add-log ./app.log
+gnosis-flow add-watch ./src
+gnosis-flow status
+gnosis-flow stop
+```
+
+## Rules
+
+Rules live in `.gnosis-flow/rules.yaml` and are loaded at startup (hot‑reload APIs coming next). The default file includes examples for log ERRORs and a demo tool on `.py` changes.
+
+Example: notify on ERROR lines and append a line on any `.py` change.
 
 ```yaml
-- on: file.modified
-  glob: "**/*.py"
-  action:
-    type: shell
-    command: "echo 'File modified: {{ file_path }}'"
+rules:
+  - name: Errors in logs
+    include: ["**/*.log"]
+    regex: "(ERROR|CRITICAL)"
+    lines_before: 2
+    lines_after: 5
+    action:
+      type: notify
+
+  - name: Append on py change
+    include: ["**/*.py"]
+    regex: "def \\w+\\("
+    action:
+      type: ahp_tool
+      name: file.append_line
+      args:
+        path: "./flow.log"
+        line: "Changed {{path}}"
 ```
+
+Templating supports `{{path}}`, `{{line}}`, `{{rule}}`, and fields from rule hits (e.g., similarity) when present.
+
+## Tools (In‑Process, no external services)
+
+Built‑in AHP‑style tools live under `gnosis_flow/ahp_tools/` and are auto‑registered:
+
+- `echo.text(text, prefix="")`
+- `file.append_line(path, line)`
+
+Add your own tools by creating a file under `gnosis_flow/ahp_tools/` and decorating functions with our lightweight `@tool` decorator.
+
+```python
+from gnosis_flow.ahp_compat import tool
+
+@tool(name="example.say")
+def say(msg: str) -> str:
+  return msg
+```
+
+If `gnosis-ahp` is installed, Gnosis Flow will use its full tool registry seamlessly.
+
+## Live Console
+
+Open `http://127.0.0.1:8766/console` to see:
+
+- FILE events: created/modified/deleted, with Δlines and (+added/−deleted) for small files
+- LOG lines (tailed)
+- HIT entries when a rule matches
+- JSON expanders to view the full event payload
+
+Use the Pause/Clear/Filter controls to focus on specific paths, rules, or types.
+
+## Notes
+
+- Excludes: `.gnosis-flow/`, `.git/`, `node_modules/`, `.venv/` are excluded by default.
+- Windows: if using the HTTP console, allow the app through the firewall when prompted.
+- Large files: snapshots (for +/- line counts) are taken only for small files to avoid heavy IO.
+
+## MCP (optional)
+
+The separate MCP connector (`gnosis-flow-mcp`) exposes monitor control tools to MCP clients. Install with extras:
+
+```bash
+pip install -e .[mcp]
+gnosis-flow-mcp
+```
+
+Tools: `gf_status`, `gf_add_watch`, `gf_add_log`, `gf_stop`, `gf_rules`.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
