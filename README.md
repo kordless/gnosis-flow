@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://travis-ci.org/kordless/gnosis-flow.svg?branch=main)](https://travis-ci.org/kordless/gnosis-flow)
 
+![Flow Diagram](flow.png)
+
 Gnosis Flow is a powerful, asynchronous file and log watcher that triggers actions based on configurable rules. It's designed to be a flexible and extensible tool for developers to automate tasks and workflows.
 
 ## Features
