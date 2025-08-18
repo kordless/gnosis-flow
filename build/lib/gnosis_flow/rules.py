@@ -71,17 +71,11 @@ rules:
     lines_before: 1
     lines_after: 4
     action:
-      type: notify
-
-  - name: Echo on py change (demo)
-    include: ["**/*.py"]
-    regex: "def \\w+\\("
-    action:
-      type: ahp_tool
-      name: echo.text
-      args:
-        text: "Changed {{path}} matched rule {{rule}}"
-        prefix: "[gnosis-flow] "
+      type: ai_tool
+      provider: anthropic
+      model: opus
+      prompt: |
+        Summarize the error and propose a fix with steps.
 """
 
 
@@ -167,3 +161,4 @@ def evaluate_file_text(path: Path, text: str, rules: List[MatchRule], window: in
                         hits.append({"rule": r.name, "type": "fuzzy", "action": r.action, **h})
                         break
     return hits
+

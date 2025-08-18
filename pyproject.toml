@@ -23,8 +23,13 @@ Homepage = "https://example.com/gnosis-flow"
 
 [project.scripts]
 gnosis-flow = "gnosis_flow.cli:main"
+gnosis-flow-mcp = "gnosis_flow.mcp.gnosis_flow_mcp:mcp.run"
 
 [tool.setuptools]
 packages = ["gnosis_flow"]
 include-package-data = true
 
+[project.optional-dependencies]
+mcp = [
+  "mcp>=0.4.0",
+]

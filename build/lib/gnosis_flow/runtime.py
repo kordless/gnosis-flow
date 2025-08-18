@@ -255,7 +255,6 @@ class HttpStatusServer:
             data = await reader.read(1024)
         first = (data or b"").split(b"\r\n", 1)[0].decode(errors="ignore")
         method, path, *_ = (first.split(" ") + ["", ""])[:3]
-        handled = False
         if path.startswith("/status"):
             body = json.dumps({
                 "ok": True,
@@ -271,7 +270,6 @@ class HttpStatusServer:
                 + f"Content-Length: {len(body)}\r\n\r\n".encode()
             )
             writer.write(headers + body)
-            handled = True
         elif path.startswith("/console.js"):
             body = CONSOLE_JS.encode()
             headers = (
@@ -281,7 +279,6 @@ class HttpStatusServer:
                 + f"Content-Length: {len(body)}\r\n\r\n".encode()
             )
             writer.write(headers + body)
-            handled = True
         elif path.startswith("/console.css"):
             body = CONSOLE_CSS.encode()
             headers = (
@@ -291,7 +288,6 @@ class HttpStatusServer:
                 + f"Content-Length: {len(body)}\r\n\r\n".encode()
             )
             writer.write(headers + body)
-            handled = True
         elif path.startswith("/console") or path == "/":
             body = CONSOLE_HTML.encode()
             headers = (
@@ -301,7 +297,6 @@ class HttpStatusServer:
                 + f"Content-Length: {len(body)}\r\n\r\n".encode()
             )
             writer.write(headers + body)
-            handled = True
         elif path.startswith("/stream"):
             # SSE stream
             headers = (
@@ -354,8 +349,7 @@ class HttpStatusServer:
                     writer.close()
                 except Exception:
                     pass
-            return
-        if not handled:
+            else:
             body = b"OK"
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
@@ -552,13 +546,6 @@ class MonitorState:
             self.exclude_prefixes.append(str(self.state_dir))
         # Also exclude .git and node_modules within any watched dir by default
         # (we'll apply as absolute prefixes when adding watches)
-        # Snapshots for line diffing
-        self.snapshots_dir = (self.state_dir / "snapshots") if self.state_dir else None
-        if self.snapshots_dir:
-            try:
-                self.snapshots_dir.mkdir(exist_ok=True)
-            except Exception:
-                pass
 
     def _load_stats(self):
         if not self.stats_path or not self.stats_path.exists():
@@ -648,48 +635,19 @@ class MonitorState:
                         pass
             except Exception:
                 pass
-        # Track line changes and acceleration; compute +/- using snapshots for small text files
+        # Track line changes and acceleration
         if ev.kind == "modified":
             p = Path(ev.path)
             stat = self.file_stats.get(ev.path) or FileStat(path=ev.path)
             # If this path is being tailed as a log, we rely on tail updates for line counts
             lines_changed = None
-            added_lines = None
-            deleted_lines = None
             try:
-                size_ok = p.exists() and p.stat().st_size <= 10_000_000
-                if str(p) not in self.tailed_logs and size_ok:
+                if str(p) not in self.tailed_logs and p.exists() and p.stat().st_size <= 10_000_000:
                     # Count lines cheaply
-                    text = p.read_text(encoding="utf-8", errors="ignore")
-                    new_lines = text.splitlines()
-                    new_count = len(new_lines)
-                    # Diff against snapshot (only if reasonably small file)
-                    added_lines = 0
-                    deleted_lines = 0
-                    try:
-                        if self.snapshots_dir and p.stat().st_size <= 2_000_000:
-                            import hashlib
-                            snap_path = self.snapshots_dir / (hashlib.sha1(ev.path.encode()).hexdigest() + ".txt")
-                            prev_text = ""
-                            if snap_path.exists():
-                                prev_text = snap_path.read_text(encoding="utf-8", errors="ignore")
-                            prev_lines = prev_text.splitlines()
-                            # Compute diff
-                            import difflib
-                            for d in difflib.ndiff(prev_lines, new_lines):
-                                if d.startswith("+ "):
-                                    added_lines += 1
-                                elif d.startswith("- "):
-                                    deleted_lines += 1
-                            # Save snapshot
-                            try:
-                                snap_path.write_text(text, encoding="utf-8")
-                            except Exception:
-                                pass
-                    except Exception:
-                        # Ignore snapshot diff errors
-                        added_lines = None
-                        deleted_lines = None
+                    with p.open("r", encoding="utf-8", errors="ignore") as f:
+                        new_count = 0
+                        for _ in f:
+                            new_count += 1
                     if stat.last_line_count is not None:
                         lines_changed = new_count - stat.last_line_count
                     else:
@@ -707,15 +665,9 @@ class MonitorState:
                 self.file_stats[ev.path] = stat
                 self._save_stats()
                 rates = stat.rates()
-                if added_lines is not None and deleted_lines is not None:
-                    print(f"[file] Δlines={lines_changed} (+{added_lines}/-{deleted_lines}) rate_5m={rates['rate_5m']} l/m accel_5m={rates['accel_5m']} l/m^2")
-                else:
-                    print(f"[file] Δlines={lines_changed} rate_5m={rates['rate_5m']} l/m accel_5m={rates['accel_5m']} l/m^2")
+                print(f"[file] Δlines={lines_changed} rate_5m={rates['rate_5m']} l/m accel_5m={rates['accel_5m']} l/m^2")
                 try:
-                    payload = {"type": "file_stats", "path": ev.path, "delta_lines": lines_changed, **rates}
-                    if added_lines is not None and deleted_lines is not None:
-                        payload.update({"added_lines": added_lines, "deleted_lines": deleted_lines})
-                    self.bcast.publish(payload)
+                    self.bcast.publish({"type": "file_stats", "path": ev.path, "delta_lines": lines_changed, **rates})
                 except Exception:
                     pass
 
