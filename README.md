@@ -10,8 +10,6 @@
 
 </div>
 
----
-
 **Gnosis Flow is not just another file watcher. It's an intelligent, AI-powered development assistant that gives your LLM agents the tools they need to understand, analyze, and interact with your codebase in real-time.**
 
 Imagine an AI that can not only see your code but also understand its structure, its dependencies, and its runtime behavior. An AI that can identify potential issues, suggest improvements, and even take action to fix problems before they happen. This is the power of Gnosis Flow.
