@@ -1,232 +1,76 @@
-# Gnosis Flow Active Agents
+<div align="center">
+  <h1>Gnosis Flow</h1>
+  <h3>Supercharge Your Development with AI-Powered Insights</h3>
+</div>
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/release/python-390/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-It's a file and log monitor with browser and cli live consoles and in-process tools to enable an ai agent to take action when files are changed or logs contain certain information. it's an intelligent logging service, similar to loggly or splunk but much simplier and designed mostly for vibe coders to better understand their code by giving their LLMs more tools to do logging and root cause analysis faster. better tools, better coding sessions!
+---
+
+**Gnosis Flow is not just another file watcher. It's an intelligent, AI-powered development assistant that gives your LLM agents the tools they need to understand, analyze, and interact with your codebase in real-time.**
+
+Imagine an AI that can not only see your code but also understand its structure, its dependencies, and its runtime behavior. An AI that can identify potential issues, suggest improvements, and even take action to fix problems before they happen. This is the power of Gnosis Flow.
 
 ![Flow Diagram](flow.png)
 
-## Install
+## The Vision: The Future of AI-Powered Development
 
-PyPI (when published):
+Gnosis Flow is more than just a tool; it's a glimpse into the future of software development. A future where AI agents are not just code completion engines but active collaborators in the creative process. A future where your AI can:
+
+*   **Proactively identify and fix bugs:** By monitoring your logs and file changes, Gnosis Flow can spot anomalies and trigger actions to fix them before they impact your users.
+*   **Perform automated security audits:** Gnosis Flow can be taught to recognize security vulnerabilities and alert you to them in real-time.
+*   **Ensure code quality and consistency:** By enforcing coding standards and best practices, Gnosis Flow can help you maintain a high-quality codebase.
+*   **Onboard new developers in record time:** Gnosis Flow can provide new team members with a deep understanding of the codebase, its history, and its architecture.
+
+## The AI Agent Tool System
+
+The heart of Gnosis Flow is its powerful and extensible tool system. This system allows you to create custom tools that can be used by your AI agents to interact with your codebase in new and exciting ways. These tools can be used to:
+
+*   **Read and write files:** Give your AI the ability to read and modify your code directly.
+*   **Execute shell commands:** Allow your AI to run tests, build your project, and even deploy it to production.
+*   **Interact with APIs:** Connect your AI to external services and APIs to extend its capabilities.
+*   **Analyze your code:** Create custom tools to analyze your code for everything from performance bottlenecks to security vulnerabilities.
+
+With Gnosis Flow, you are not just writing code; you are building an intelligent system that can help you write better code, faster.
+
+## Key Features
+
+*   **Real-time File and Log Monitoring:** Gnosis Flow watches your files and logs for changes and triggers actions in real-time.
+*   **Live Browser and CLI Consoles:** Get a live view of your project's activity through a web browser or your command line.
+*   **In-Process Tools:** Create custom tools that can be used by your AI agents to interact with your codebase.
+*   **Code Relationship Graph:** Understand the relationships between your files and modules with a powerful graph visualization tool.
+*   **Extensible Rule Engine:** Define custom rules to trigger actions based on specific file changes or log messages.
+
+## Getting Started
+
+Ready to unlock the power of AI-powered development? Here's how to get started with Gnosis Flow:
+
+### Installation
 
 ```bash
 pip install gnosis-flow
 ```
 
-From this repo (development):
-
-```bash
-cd gnosis-flow
-pip install -e .
-```
-
-Optional MCP extras (for the separate MCP connector CLI):
-
-```bash
-pip install -e .[mcp]
-```
-
-## Run
-
-Start in your project directory and enable the HTTP console:
+### Running Gnosis Flow
 
 ```bash
 gnosis-flow start --dir . --http
 ```
 
-- First run creates `.gnosis-flow/` and `rules.yaml`. If your repo uses Git, it offers to add `.gnosis-flow` to `.gitignore`.
-- Control server: `127.0.0.1:8765`
-- Live console (SSE): `http://127.0.0.1:8766/console`
-- JSON status: `http://127.0.0.1:8766/status`
+This will start the Gnosis Flow monitor and the HTTP console. You can then access the live console at `http://127.0.0.1:8766/console`.
 
-Expose on your network (optional):
+## The Gnosis Flow Ecosystem
 
-```bash
-gnosis-flow start --dir . --http --host 0.0.0.0 --http-port 8766
-```
+Gnosis Flow is part of a larger ecosystem of tools designed to help you build better software with AI. Check out our other projects:
 
-Runtime control (in another terminal):
+*   **Gnosis Evolve:** A powerful tool for evolving your codebase with the help of AI.
+*   **Gnosis AHP:** A framework for building and running AI-powered tools.
 
-```bash
-gnosis-flow add-log ./app.log
-gnosis-flow add-watch ./src
-gnosis-flow status
-gnosis-flow stop
-```
+## Contributing
 
-Demo (PowerShell)
-- Run a local demo that creates/modifies/deletes files under the repo so you can see events in the live console:
-
-```powershell
-PowerShell -ExecutionPolicy Bypass -File .\demo.ps1
-```
-
-The script creates a `scratch_demo` directory, writes a file, creates a subdir, deletes both, and exits.
-
-## Rules
-
-Rules live in `.gnosis-flow/rules.yaml` and are loaded at startup (hot‑reload APIs coming next). The default file includes examples for log ERRORs and a demo tool on `.py` changes.
-
-Example: notify on ERROR lines and append a line on any `.py` change.
-
-```yaml
-rules:
-  - name: Errors in logs
-    include: ["**/*.log"]
-    regex: "(ERROR|CRITICAL)"
-    lines_before: 2
-    lines_after: 5
-    action:
-      type: notify
-
-  - name: Append on py change
-    include: ["**/*.py"]
-    regex: "def \w+\("
-    action:
-      type: ahp_tool
-      name: file.append_line
-      args:
-        path: "./flow.log"
-        line: "Changed {{path}}"
-```
-
-Templating supports `{{path}}`, `{{line}}`, `{{rule}}`, and fields from rule hits (e.g., similarity) when present.
-
-## Tools (In‑Process, no external services)
-
-Built‑in AHP‑style tools live under `gnosis_flow/ahp_tools/` and are auto‑registered:
-
-- `echo.text(text, prefix="")`
-- `file.append_line(path, line)`
-
-Add your own tools by creating a file under `gnosis_flow/ahp_tools/` and decorating functions with our lightweight `@tool` decorator.
-
-```python
-from gnosis_flow.ahp_compat import tool
-
-@tool(name="example.say")
-def say(msg: str) -> str:
-  return msg
-```
-
-If `gnosis-ahp` is installed, Gnosis Flow will use its full tool registry seamlessly.
-
-## Live Console
-
-Open `http://127.0.0.1:8766/console` to see:
-
-- FILE events: created/modified/deleted, with Δlines and (+added/−deleted) for small files
-- LOG lines (tailed)
-- HIT entries when a rule matches
-- JSON expanders to view the full event payload
-
-Use the Pause/Clear/Filter controls to focus on specific paths, rules, or types.
-
-## Code Relationship Graph
-
-The console includes a Graph panel that queries a live, local code relationship graph.
-
-### Graph Panel
-
-- Edge types: `dir_sibling`, `import_dep`, `co_activity`, optionally `shared_tokens`, `term_ref`.
-- Enter a path, toggle edge types, set min weight and limit, then Query.
-- Results show neighbor path, weight, count, and explanation.
-
-### Indexing the Graph
-
-The graph builds edges lazily. To speed up queries (especially on larger repos), you can pre‑warm the index:
-
-- Windows (recommended): run the indexing script with progress and ETA
-
-```powershell
-PowerShell -ExecutionPolicy Bypass -File .\scripts\index-graph.ps1
-```
-
-- What it does: walks `*.py` files and materializes `import_dep`, `shared_tokens`, and `term_ref` edges with a low per‑file limit to touch everything quickly. It prints progress and a summary.
-- Options (defaults shown):
-
-```powershell
-PowerShell -ExecutionPolicy Bypass -File .\scripts\index-graph.ps1 -Types "import_dep,shared_tokens,term_ref" -Limit 1 -Include "*.py" -Dir "."
-```
-
-Notes:
-- `dir_sibling` is computed on demand; no indexing needed.
-- `co_activity` is live only (based on file events as you work).
-- You can rerun the script anytime to refresh after large edits.
-
-### Searching the Graph
-
-You can search for files in the graph using the CLI or the HTTP API.
-
-**CLI:**
-
-```bash
-gnosis-flow graph search "your search query"
-```
-
-**HTTP API:**
-
-```bash
-curl -s "http://127.0.0.1:8766/graph/search?q=your%20search%20query" | jq
-```
-
-### Graph CLI Commands
-
-```bash
-gnosis-flow graph neighbors path/to/file.py --types dir_sibling,import_dep,co_activity --min-w 0.1 --limit 20
-gnosis-flow graph why path/to/a.py path/to/b.py
-```
-
-### Graph HTTP Endpoints
-
-- `/graph/edge-types`, `/graph/node?path=<rel>`, `/graph/neighbors?path=<rel>&types=...&min_w=...&limit=...`, `/graph/why?src=<a>&dst=<b>`, `/graph/search?q=...`, `/graph/metrics`.
-
-## MCP (optional)
-
-The separate MCP connector (`gnosis-flow-mcp`) exposes monitor control tools to MCP clients. Install with extras:
-
-```bash
-pip install -e .[mcp]
-gnosis-flow-mcp
-```
-
-Tools: `gf_status`, `gf_add_watch`, `gf_add_log`, `gf_stop`, `gf_rules`.
-
-## Config
-
-You can control extra excludes via a small config file. A template is provided at `config.yaml` in this repo.
-
-- Copy it into your project’s state folder: `.gnosis-flow/config.yaml`.
-  - Windows (PowerShell): `Copy-Item .\config.yaml .\.gnosis-flow\config.yaml`
-  - macOS/Linux: `cp config.yaml .gnosis-flow/config.yaml`
-- Supports `exclude_names` (merged with built-in defaults like `.git`, `node_modules`, `__pycache__`, etc.).
-
-Graph settings (optional) under `.gnosis-flow/config.yaml`:
-
-```yaml
-graph:
-  enabled: true
-  edge_types: [dir_sibling, import_dep, co_activity]
-  co_activity:
-    window_sec: 900
-  decay:
-    tau_sec: 86400
-  shared_tokens:
-    enabled: false
-    max_file_kb: 256
-  terms:
-    enabled: false
-    list: ["kafka", "redis", "payment"]
-```
-
-## Notes
-
-- Excludes: `.gnosis-flow/`, `.git/`, `node_modules/`, `.venv/` are excluded by default.
-- Windows: if using the HTTP console, allow the app through the firewall when prompted.
-- Large files: snapshots (for +/- line counts) are taken only for small files to avoid heavy IO.
+We welcome contributions from the community! If you have an idea for a new feature or a bug fix, please open an issue or submit a pull request on our [GitHub repository](https://github.com/kordless/gnosis-flow).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Gnosis Flow is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
