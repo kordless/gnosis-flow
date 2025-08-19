@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
+from .graph.store import GraphManager
 from .rules import load_rules, default_rules_yaml, evaluate_log_line, evaluate_file_text
 from .actions import dispatch
 from .ahp_compat import get_global_registry
@@ -66,13 +67,15 @@ class FileStat:
 
 
 class DirWatcher:
-    def __init__(self, path: str, poll_interval: float = 1.0, exclude_prefixes: Optional[List[str]] = None):
+    def __init__(self, path: str, poll_interval: float = 1.0, exclude_prefixes: Optional[List[str]] = None, exclude_names: Optional[List[str]] = None):
         self.root = Path(path)
         self.poll = poll_interval
         self._snapshot_files: Dict[str, float] = {}
         self._snapshot_dirs: Set[str] = set()
         self._running = False
         self._excl: List[str] = [str(Path(p)) for p in (exclude_prefixes or [])]
+        # Names to exclude anywhere under root (recursive by segment match)
+        self._excl_names: Set[str] = set(exclude_names or [])
 
     def _scan(self) -> Tuple[Dict[str, float], Set[str]]:
         files: Dict[str, float] = {}
@@ -88,6 +91,15 @@ class DirWatcher:
                     if sp == ex or sp.startswith(ex + os.sep):
                         skip = True
                         break
+                if not skip and self._excl_names:
+                    # Check any path segment matches excluded names
+                    try:
+                        for seg in p.parts:
+                            if seg in self._excl_names:
+                                skip = True
+                                break
+                    except Exception:
+                        pass
                 if skip:
                     continue
                 if p.is_dir():
@@ -273,6 +285,152 @@ class HttpStatusServer:
                 "events": self.state.event_count,
                 "lines": self.state.line_count,
             }).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/edge-types"):
+            # list graph edge types
+            try:
+                body = json.dumps(GraphManager.edge_types()).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/node"):
+            try:
+                p = qs.get("path") or qs.get("node") or ""
+                info = self.state.graph.node_info(p) if self.state.graph else {}
+                body = json.dumps(info).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/search"):
+            try:
+                q = qs.get("q", "")
+                limit = int(qs.get("limit", "20"))
+                res = []
+                if self.state.graph:
+                    from .graph.store import GraphStore
+                    # direct DB access via manager store
+                    res = self.state.graph.store.search_files(q, limit=limit)
+                body = json.dumps(res).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/neighbors"):
+            try:
+                p = qs.get("path") or qs.get("node") or ""
+                types = [t for t in (qs.get("types", "").split(",") if qs.get("types") else []) if t]
+                limit = int(qs.get("limit", "20"))
+                min_w = float(qs.get("min_w", "0"))
+                res = self.state.graph.neighbors_for_path(p, types=types or None, min_w=min_w, limit=limit) if self.state.graph else []
+                body = json.dumps(res).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/stream"):
+            # SSE for graph updates
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/event-stream\r\n"
+                b"Cache-Control: no-cache\r\n"
+                b"Connection: keep-alive\r\n"
+                b"Access-Control-Allow-Origin: *\r\n\r\n"
+            )
+            try:
+                writer.write(headers)
+                await writer.drain()
+            except Exception:
+                return
+            q = self.state.graph_bcast.add_subscriber()
+            try:
+                try:
+                    writer.write(b"event: hello\ndata: {}\n\n")
+                    await writer.drain()
+                except Exception:
+                    return
+                keep = True
+                while keep:
+                    try:
+                        evt = await asyncio.wait_for(q.get(), timeout=15.0)
+                        payload = ("data: " + json.dumps(evt, ensure_ascii=False) + "\n\n").encode()
+                        writer.write(payload)
+                        await writer.drain()
+                    except asyncio.TimeoutError:
+                        try:
+                            writer.write(b": keep-alive\n\n")
+                            await writer.drain()
+                        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                            keep = False
+                        except Exception:
+                            keep = False
+                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                        keep = False
+                    except asyncio.CancelledError:
+                        keep = False
+                    except Exception:
+                        keep = False
+            finally:
+                self.state.graph_bcast.remove_subscriber(q)
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            return
+        elif path.startswith("/graph/why"):
+            try:
+                a = qs.get("src") or qs.get("a") or ""
+                b = qs.get("dst") or qs.get("b") or ""
+                res = self.state.graph.why(a, b) if self.state.graph else []
+                body = json.dumps(res).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
+            headers = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Access-Control-Allow-Origin: *\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            )
+            writer.write(headers + body)
+            handled = True
+        elif path.startswith("/graph/metrics"):
+            try:
+                from .metrics import get_graph_metrics
+                body = json.dumps(get_graph_metrics()).encode()
+            except Exception as e:
+                body = json.dumps({"error": str(e)}).encode()
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/json\r\n"
@@ -495,6 +653,23 @@ CONSOLE_HTML = """
         <input id="filter" placeholder="Filter (type: log|file|hit, path, rule)" />
       </div>
     </header>
+    <section id="graph-panel">
+      <details id="graphBox">
+        <summary>Graph · Related Files</summary>
+        <div class="graph-controls">
+          <input id="graphPath" placeholder="File path (relative or absolute)" />
+          <label><input type="checkbox" id="t_dir" checked /> dir_sibling</label>
+          <label><input type="checkbox" id="t_imp" checked /> import_dep</label>
+          <label><input type="checkbox" id="t_co" checked /> co_activity</label>
+          <label><input type="checkbox" id="t_tok" /> shared_tokens</label>
+          <label><input type="checkbox" id="t_term" /> term_ref</label>
+          <label>min_w <input type="number" id="minW" step="0.01" value="0.0" style="width:80px" /></label>
+          <label>limit <input type="number" id="limitN" step="1" value="12" style="width:70px" /></label>
+          <button id="graphQueryBtn">Query</button>
+        </div>
+        <div id="graphResults"></div>
+      </details>
+    </section>
     <main id="log"></main>
     <script src="/console.js"></script>
   </body>
@@ -502,7 +677,7 @@ CONSOLE_HTML = """
 """
 
 CONSOLE_CSS = """
-:root { --bg:#0f1115; --panel:#151924; --fg:#e5e7eb; --muted:#9aa0a6; --ok:#34d399; --warn:#f59e0b; --err:#ef4444; --acc:#5eead4; }
+:root { --bg:#0f1115; --panel:#151924; --fg:#e5e7eb; --muted:#9aa0a6; --ok:#34d399; --warn:#f59e0b; --err:#ef4444; --acc:#5eead4; --blue:#93c5fd; --vio:#c084fc; }
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
 header{position:sticky;top:0;background:linear-gradient(180deg,var(--panel),rgba(21,25,36,0.6));border-bottom:1px solid rgba(255,255,255,0.06);display:flex;gap:16px;align-items:center;justify-content:space-between;padding:10px 12px}
 .title{font-weight:700;letter-spacing:.3px}
@@ -510,16 +685,30 @@ header{position:sticky;top:0;background:linear-gradient(180deg,var(--panel),rgba
 button{background:rgba(94,234,212,.12);color:var(--fg);border:1px solid rgba(94,234,212,.4);padding:6px 10px;border-radius:8px;cursor:pointer}
 input{background:rgba(255,255,255,.06);color:var(--fg);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:6px 8px;min-width:280px}
 main{padding:10px 12px}
-.row{display:flex;gap:10px;align-items:flex-start;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.06)}
-.badge{padding:2px 6px;border-radius:6px;font-weight:700;min-width:44px;text-align:center}
-.file{background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.5)}
-.log{background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.4)}
-.hit{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.5)}
-.dir{background:rgba(147,197,253,.12);border:1px solid rgba(147,197,253,.5)}
-.meta{color:var(--muted)}
+.row{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.tag{font-size:11px;padding:2px 6px;border-radius:5px;font-weight:700}
+.ts{background:rgba(255,255,255,.1);color:var(--muted)}
+.etype-file{background:rgba(52,211,153,.9);color:#0b2e24}
+.etype-dir{background:rgba(147,197,253,.9);color:#0b1e36}
+.etype-log{background:rgba(144,97,249,.9);color:#1e0b36}
+.etype-hit{background:rgba(245,158,11,.9);color:#2e1e0b}
+.op-add{background:rgba(52,211,153,.3);border:1px solid rgba(52,211,153,.6)}
+.op-mod{background:rgba(245,158,11,.25);border:1px solid rgba(245,158,11,.6)}
+.op-del{background:rgba(239,68,68,.25);border:1px solid rgba(239,68,68,.6)}
 .jsonbtn{margin-left:auto}
 details{margin-left:auto}
 pre{white-space:pre-wrap;word-break:break-word}
+/* graph panel */
+#graph-panel{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(21,25,36,.6)}
+#graph-panel summary{cursor:pointer;font-weight:700}
+.graph-controls{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+#graphResults{display:grid;grid-template-columns: 1fr 1fr; gap:8px}
+.gitem{padding:6px 8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.04)}
+.gitem .path{font-weight:700}
+.chip{display:inline-block;font-size:11px;padding:2px 6px;border-radius:6px;margin-right:6px}
+.chip.ds{background:rgba(147,197,253,.3);border:1px solid rgba(147,197,253,.6)}
+.chip.imp{background:rgba(94,234,212,.2);border:1px solid rgba(94,234,212,.6)}
+.chip.co{background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.6)}
 """
 
 CONSOLE_JS = """
@@ -543,13 +732,16 @@ CONSOLE_JS = """
     if(!matchesFilter(text, json)) return;
     const div = document.createElement('div');
     div.className = 'row';
-    const badge = document.createElement('span');
-    badge.className = 'badge ' + kind;
-    badge.textContent = kind.toUpperCase();
-    const span = document.createElement('span');
     const ts = json.ts ? new Date(json.ts * 1000) : new Date();
     const tsStr = ts.toLocaleTimeString();
-    span.textContent = `[${tsStr}] ` + text;
+    const tsTag = document.createElement('span'); tsTag.className='tag ts'; tsTag.textContent=tsStr;
+    const etTag = document.createElement('span');
+    etTag.className = 'tag ' + (
+      kind==='file' ? 'etype-file' : kind==='dir' ? 'etype-dir' : kind==='log' ? 'etype-log' : 'etype-hit'
+    );
+    etTag.textContent = (kind==='dir'?'DIR':kind==='file'?'FILE':kind==='log'?'LOG':'HIT');
+    const span = document.createElement('span');
+    span.textContent = text;
     const det = document.createElement('details');
     const sum = document.createElement('summary');
     sum.textContent = '{ }';
@@ -557,7 +749,7 @@ CONSOLE_JS = """
     const pre = document.createElement('pre');
     pre.textContent = JSON.stringify(json, null, 2);
     det.appendChild(sum); det.appendChild(pre);
-    div.appendChild(badge); div.appendChild(span); div.appendChild(det);
+    div.appendChild(tsTag); div.appendChild(etTag); div.appendChild(span); div.appendChild(det);
     log.appendChild(div);
     // Scroll
     window.requestAnimationFrame(()=>{ window.scrollTo(0, document.body.scrollHeight); });
@@ -572,14 +764,31 @@ CONSOLE_JS = """
     renderOne(obj);
   }
 
+  function opTag(text, cls){ const s=document.createElement('span'); s.className='tag '+cls; s.textContent=text; return s; }
+
   function renderOne(obj){
     if(paused) return;
     if(!obj || !obj.type) return;
     if(obj.type === 'file_event'){
-      row('file', `${obj.kind} ${obj.path}`, obj);
+      const op = (obj.kind==='created'?'ADD':obj.kind==='modified'?'MOD':obj.kind==='deleted'?'DEL':obj.kind);
+      const div = document.createElement('div'); div.className='row';
+      const ts = obj.ts ? new Date(obj.ts*1000) : new Date(); const tsStr=ts.toLocaleTimeString();
+      const tsTag=document.createElement('span'); tsTag.className='tag ts'; tsTag.textContent=tsStr;
+      const et=document.createElement('span'); et.className='tag etype-file'; et.textContent='FILE';
+      const opcls = op==='ADD'?'op-add': op==='MOD'?'op-mod':'op-del'; const ot=opTag(op, opcls);
+      const span=document.createElement('span'); span.textContent = obj.path;
+      const det=document.createElement('details'); const sum=document.createElement('summary'); sum.textContent='{ }'; sum.className='jsonbtn'; const pre=document.createElement('pre'); pre.textContent=JSON.stringify(obj,null,2); det.appendChild(sum); det.appendChild(pre);
+      if(matchesFilter(span.textContent, obj)){ div.appendChild(tsTag); div.appendChild(et); div.appendChild(ot); div.appendChild(span); div.appendChild(det); log.appendChild(div); window.requestAnimationFrame(()=>{ window.scrollTo(0, document.body.scrollHeight); }); }
     } else if(obj.type === 'dir_event'){
-      const kind = (obj.kind || '').replace('dir_', '');
-      row('dir', `${kind} ${obj.path}`, obj);
+      const kind = (obj.kind||''); const op = kind==='dir_created'?'ADD':'DEL';
+      const div = document.createElement('div'); div.className='row';
+      const ts = obj.ts ? new Date(obj.ts*1000) : new Date(); const tsStr=ts.toLocaleTimeString();
+      const tsTag=document.createElement('span'); tsTag.className='tag ts'; tsTag.textContent=tsStr;
+      const et=document.createElement('span'); et.className='tag etype-dir'; et.textContent='DIR';
+      const opcls = op==='ADD'?'op-add':'op-del'; const ot=opTag(op, opcls);
+      const span=document.createElement('span'); span.textContent = obj.path;
+      const det=document.createElement('details'); const sum=document.createElement('summary'); sum.textContent='{ }'; sum.className='jsonbtn'; const pre=document.createElement('pre'); pre.textContent=JSON.stringify(obj,null,2); det.appendChild(sum); det.appendChild(pre);
+      if(matchesFilter(span.textContent, obj)){ div.appendChild(tsTag); div.appendChild(et); div.appendChild(ot); div.appendChild(span); div.appendChild(det); log.appendChild(div); window.requestAnimationFrame(()=>{ window.scrollTo(0, document.body.scrollHeight); }); }
     } else if(obj.type === 'log_line'){
       row('log', `${obj.path} :: ${obj.line}`, obj);
     } else if(obj.type === 'rule_hit'){
@@ -611,6 +820,61 @@ CONSOLE_JS = """
       renderAll();
     }
   }).catch(()=>{});
+  // Graph helpers
+  const graphPath = document.getElementById('graphPath');
+  const t_dir = document.getElementById('t_dir');
+  const t_imp = document.getElementById('t_imp');
+  const t_co = document.getElementById('t_co');
+  const t_tok = document.getElementById('t_tok');
+  const t_term = document.getElementById('t_term');
+  const minW = document.getElementById('minW');
+  const limitN = document.getElementById('limitN');
+  const graphBtn = document.getElementById('graphQueryBtn');
+  const graphResults = document.getElementById('graphResults');
+
+  function chip(cls, txt){ const s=document.createElement('span'); s.className='chip '+cls; s.textContent=txt; return s; }
+  function renderGraph(items){
+    if(!graphResults) return;
+    graphResults.innerHTML='';
+    for(const it of items){
+      const div = document.createElement('div'); div.className='gitem';
+      const head = document.createElement('div'); head.className='head';
+      head.appendChild(chip(it.type==='dir_sibling'?'ds': it.type==='import_dep'?'imp':'co', it.type));
+      const w = document.createElement('span'); w.textContent = `w=${(it.weight??0).toFixed(3)} c=${it.count??0}`;
+      head.appendChild(w);
+      const path = document.createElement('div'); path.className='path'; path.textContent = it.dst;
+      const ex = document.createElement('div'); ex.className='explain'; ex.textContent = it.explain || '';
+      div.appendChild(head); div.appendChild(path); div.appendChild(ex);
+      graphResults.appendChild(div);
+    }
+  }
+  async function runGraphQuery(){
+    if(!graphPath) return;
+    const p = (graphPath.value||'').trim(); if(!p){ return; }
+    const types = [
+      t_dir&&t_dir.checked?'dir_sibling':null,
+      t_imp&&t_imp.checked?'import_dep':null,
+      t_co&&t_co.checked?'co_activity':null,
+      t_tok&&t_tok.checked?'shared_tokens':null,
+      t_term&&t_term.checked?'term_ref':null
+    ].filter(Boolean).join(',');
+    const url = `/graph/neighbors?path=${encodeURIComponent(p)}${types?`&types=${encodeURIComponent(types)}`:''}&min_w=${encodeURIComponent(minW?minW.value:'0')}&limit=${encodeURIComponent(limitN?limitN.value:'12')}`;
+    try{
+      const res = await fetch(url); const j = await res.json();
+      if(Array.isArray(j)) renderGraph(j);
+    }catch(e){ /* ignore */ }
+  }
+  if(graphBtn){ graphBtn.onclick = runGraphQuery; }
+  // convenience: when a file event row is clicked, prefill path
+  log.addEventListener('click', (ev)=>{
+    const target = ev.target;
+    if(target && target.tagName==='SPAN'){
+      const text = target.textContent||'';
+      if(text.includes('/') || text.includes('\\')){
+        if(graphPath) graphPath.value = text;
+      }
+    }
+  });
 })();
 """
 
@@ -687,13 +951,36 @@ class MonitorState:
         # Optional config: .gnosis-flow/config.yaml with exclude_names: [ ... ]
         self.config_path = (self.state_dir / "config.yaml") if self.state_dir else None
         self.extra_exclude_names: List[str] = []
+        self.graph_config = {
+            "enabled": True,
+            "window_sec": 900,
+            "decay_tau_sec": 86400,
+            "edge_types": ["dir_sibling", "import_dep", "co_activity"],
+            "shared_tokens": {"enabled": False, "max_file_kb": 256},
+            "terms": {"enabled": False, "list": []},
+        }
         if self.config_path and self.config_path.exists():
             try:
                 import yaml  # local dependency already present
                 cfg = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
                 self.extra_exclude_names = list(cfg.get("exclude_names", []) or [])
+                gcfg = cfg.get("graph", {}) or {}
+                self.graph_config["enabled"] = bool(gcfg.get("enabled", True))
+                self.graph_config["window_sec"] = int(gcfg.get("co_activity", {}).get("window_sec", gcfg.get("window_sec", 900)))
+                self.graph_config["decay_tau_sec"] = int(gcfg.get("decay", {}).get("tau_sec", gcfg.get("decay_tau_sec", 86400)))
+                if isinstance(gcfg.get("edge_types"), list):
+                    self.graph_config["edge_types"] = [str(t) for t in gcfg.get("edge_types")]
+                st = gcfg.get("shared_tokens", {}) or {}
+                self.graph_config["shared_tokens"]["enabled"] = bool(st.get("enabled", False))
+                self.graph_config["shared_tokens"]["max_file_kb"] = int(st.get("max_file_kb", 256))
+                tr = gcfg.get("terms", {}) or {}
+                self.graph_config["terms"]["enabled"] = bool(tr.get("enabled", False))
+                lst = tr.get("list", []) or []
+                if isinstance(lst, list):
+                    self.graph_config["terms"]["list"] = [str(x) for x in lst]
             except Exception:
                 self.extra_exclude_names = []
+                # leave graph_config defaults
         # Discover built-in tools (lenient)
         try:
             reg = get_global_registry()
@@ -703,6 +990,10 @@ class MonitorState:
             pass
         # Event log path
         self.events_path = (self.state_dir / "events.ndjson") if self.state_dir else None
+        # Graph manager (initialized by run_monitor once root known)
+        self.graph: Optional[GraphManager] = None
+        # Broadcaster for graph updates
+        self.graph_bcast = Broadcaster()
 
     def log_event(self, event: Dict[str, Any]) -> None:
         if not self.events_path:
@@ -754,7 +1045,8 @@ class MonitorState:
         for name in names:
             cand = os.path.join(p, name)
             excl.append(cand)
-        watcher = DirWatcher(p, poll_interval=self.poll_interval, exclude_prefixes=excl)
+        # Recursive name-based excludes as well
+        watcher = DirWatcher(p, poll_interval=self.poll_interval, exclude_prefixes=excl, exclude_names=names)
 
         async def _task():
             async for ev in watcher.run():
@@ -796,6 +1088,18 @@ class MonitorState:
             evt = {"type": "file_event", "path": ev.path, "kind": ev.kind, "ts": ev.ts}
             self.bcast.publish(evt)
             self.log_event(evt)
+        except Exception:
+            pass
+        # Feed graph co-activity
+        try:
+            if self.graph and ev.kind in ("created", "modified"):
+                self.graph.on_file_event(ev.path, ev.ts)
+                # publish lightweight graph update for this file
+                try:
+                    nbs = self.graph.neighbors_for_path(ev.path, types=["co_activity"], min_w=0.0, limit=8)
+                    self.graph_bcast.publish({"type": "graph_update", "path": ev.path, "ts": ev.ts, "neighbors": nbs})
+                except Exception:
+                    pass
         except Exception:
             pass
         # On modify, scan text windows if rules apply
@@ -953,6 +1257,33 @@ async def run_monitor(initial_dirs: List[str], initial_logs: List[str], host: st
             os.environ["GNOSIS_FLOW_STATE_DIR"] = str(state.state_dir)
     except Exception:
         pass
+    # Initialize graph manager using the first watched dir as root
+    try:
+        root_dir = Path(initial_dirs[0]).resolve() if initial_dirs else Path.cwd().resolve()
+        if state.state_dir and state.graph_config.get("enabled", True):
+            # collect terms: config list + fuzzy terms from rules if enabled
+            terms_enabled = bool(state.graph_config.get("terms", {}).get("enabled", False))
+            terms_list = list(state.graph_config.get("terms", {}).get("list", []) or [])
+            if terms_enabled and state.rules:
+                try:
+                    for r in state.rules:
+                        for t in getattr(r, "fuzzy", []) or []:
+                            if t not in terms_list:
+                                terms_list.append(t)
+                except Exception:
+                    pass
+            st_cfg = state.graph_config.get("shared_tokens", {}) or {}
+            state.graph = GraphManager(
+                root=root_dir,
+                state_dir=state.state_dir,
+                window_sec=int(state.graph_config.get("window_sec", 900)),
+                decay_tau_sec=int(state.graph_config.get("decay_tau_sec", 86400)),
+                terms=terms_list if terms_enabled else [],
+                shared_tokens_enabled=bool(st_cfg.get("enabled", False)),
+                max_file_kb=int(st_cfg.get("max_file_kb", 256)),
+            )
+    except Exception:
+        state.graph = None
     ctrl = ControlServer(host, port, state)
     await ctrl.start()
     http_srv = None

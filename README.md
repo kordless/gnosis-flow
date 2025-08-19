@@ -124,6 +124,47 @@ Open `http://127.0.0.1:8766/console` to see:
 
 Use the Pause/Clear/Filter controls to focus on specific paths, rules, or types.
 
+### Graph Panel
+
+The console includes a Graph panel that queries a live, local code relationship graph:
+
+- Edge types: `dir_sibling`, `import_dep`, `co_activity`, optionally `shared_tokens`, `term_ref`.
+- Enter a path, toggle edge types, set min weight and limit, then Query.
+- Results show neighbor path, weight, count, and explanation.
+
+HTTP endpoints (for scripts):
+
+- `/graph/edge-types`, `/graph/node?path=<rel>`, `/graph/neighbors?path=<rel>&types=...&min_w=...&limit=...`, `/graph/why?src=<a>&dst=<b>`, `/graph/search?q=...`, `/graph/metrics`.
+
+CLI:
+
+```bash
+gnosis-flow graph neighbors path/to/file.py --types dir_sibling,import_dep,co_activity --min-w 0.1 --limit 20
+gnosis-flow graph why path/to/a.py path/to/b.py
+```
+
+### Indexing (Pre‑warm Graph)
+
+The graph builds edges lazily. To speed up queries (especially on larger repos), you can pre‑warm it:
+
+- Windows (recommended): run the indexing script with progress and ETA
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\index-graph.ps1
+```
+
+- What it does: walks `*.py` files and materializes `import_dep`, `shared_tokens`, and `term_ref` edges with a low per‑file limit to touch everything quickly. It prints progress and a summary.
+- Options (defaults shown):
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File .\scripts\index-graph.ps1 -Types "import_dep,shared_tokens,term_ref" -Limit 1 -Include "*.py" -Dir "."
+```
+
+Notes:
+- `dir_sibling` is computed on demand; no indexing needed.
+- `co_activity` is live only (based on file events as you work).
+- You can rerun the script anytime to refresh after large edits.
+
 ## Config
 
 You can control extra excludes via a small config file. A template is provided at `config.yaml` in this repo.
@@ -131,7 +172,25 @@ You can control extra excludes via a small config file. A template is provided a
 - Copy it into your project’s state folder: `.gnosis-flow/config.yaml`.
   - Windows (PowerShell): `Copy-Item .\config.yaml .\.gnosis-flow\config.yaml`
   - macOS/Linux: `cp config.yaml .gnosis-flow/config.yaml`
-- Currently supports `exclude_names` (merged with built-in defaults like `.git`, `node_modules`, `__pycache__`, etc.).
+- Supports `exclude_names` (merged with built-in defaults like `.git`, `node_modules`, `__pycache__`, etc.).
+
+Graph settings (optional) under `.gnosis-flow/config.yaml`:
+
+```yaml
+graph:
+  enabled: true
+  edge_types: [dir_sibling, import_dep, co_activity]
+  co_activity:
+    window_sec: 900
+  decay:
+    tau_sec: 86400
+  shared_tokens:
+    enabled: false
+    max_file_kb: 256
+  terms:
+    enabled: false
+    list: ["kafka", "redis", "payment"]
+```
 
 ## Notes
 

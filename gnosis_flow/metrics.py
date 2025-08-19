@@ -46,3 +46,30 @@ def get_tool_usage() -> Dict[str, Dict[str, int]]:
         pass
     return {}
 
+
+# Graph metrics
+def _graph_path() -> Path:
+    return _state_dir() / "graph_metrics.json"
+
+
+def increment_graph_metric(name: str) -> None:
+    path = _graph_path()
+    try:
+        data: Dict[str, int] = {}
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+        data[name] = int(data.get(name, 0)) + 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_graph_metrics() -> Dict[str, int]:
+    path = _graph_path()
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}

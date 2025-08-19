@@ -11,7 +11,9 @@ import typer
 
 app = typer.Typer(help="Gnosis Flow Monitor: async file/log watcher with triggerable actions")
 tools_app = typer.Typer(help="Inspect in-process tools (schemas, categories)")
+graph_app = typer.Typer(help="Query the code relationship graph")
 app.add_typer(tools_app, name="tools")
+app.add_typer(graph_app, name="graph")
 
 
 def _send_control_command(cmd: dict, host: str = "127.0.0.1", port: int = 8765, timeout: float = 3.0) -> dict:
@@ -158,5 +160,36 @@ def tools_info(name: str):
         tool = reg.get_tool(name)
         schema = getattr(tool, "get_schema", lambda: {} )()
         typer.echo(json.dumps(schema, indent=2, ensure_ascii=False))
+    except Exception as e:
+        typer.echo(json.dumps({"error": str(e)}))
+
+
+@graph_app.command("neighbors")
+def graph_neighbors(path: str, types: Optional[str] = typer.Option(None, "--types", help="Comma-separated edge types"), min_w: float = 0.0, limit: int = 20):
+    """List graph neighbors for a file path (relative or absolute)."""
+    try:
+        from .util import project_root_from_cwd, ensure_state_dir
+        from .graph.store import GraphManager
+        root = project_root_from_cwd()
+        state = ensure_state_dir(root)
+        gm = GraphManager(root=root, state_dir=state)
+        tlist = [t.strip() for t in types.split(",")] if types else None
+        res = gm.neighbors_for_path(path, types=tlist, min_w=min_w, limit=limit)
+        typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+    except Exception as e:
+        typer.echo(json.dumps({"error": str(e)}))
+
+
+@graph_app.command("why")
+def graph_why(src: str, dst: str):
+    """Explain edges between two files (src, dst)."""
+    try:
+        from .util import project_root_from_cwd, ensure_state_dir
+        from .graph.store import GraphManager
+        root = project_root_from_cwd()
+        state = ensure_state_dir(root)
+        gm = GraphManager(root=root, state_dir=state)
+        res = gm.why(src, dst)
+        typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
     except Exception as e:
         typer.echo(json.dumps({"error": str(e)}))

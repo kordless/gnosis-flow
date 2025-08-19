@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import re
-import yaml
+try:
+    import yaml  # optional; tests and runtime can proceed without it
+    HAVE_YAML = True
+except Exception:  # pragma: no cover
+    yaml = None
+    HAVE_YAML = False
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,7 +39,14 @@ class MatchRule:
 def load_rules(path: Path) -> List[MatchRule]:
     if not path.exists():
         return []
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if HAVE_YAML:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {}
+    else:
+        # Minimal fallback: no YAML parser, return empty rules
+        data = {}
     rules = []
     for item in data.get("rules", []):
         r = MatchRule(
