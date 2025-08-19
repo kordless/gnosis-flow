@@ -83,7 +83,7 @@ rules:
 
   - name: Append on py change
     include: ["**/*.py"]
-    regex: "def \\w+\\("
+    regex: "def \w+\("
     action:
       type: ahp_tool
       name: file.append_line
@@ -124,28 +124,19 @@ Open `http://127.0.0.1:8766/console` to see:
 
 Use the Pause/Clear/Filter controls to focus on specific paths, rules, or types.
 
-### Graph Panel
+## Code Relationship Graph
 
-The console includes a Graph panel that queries a live, local code relationship graph:
+The console includes a Graph panel that queries a live, local code relationship graph.
+
+### Graph Panel
 
 - Edge types: `dir_sibling`, `import_dep`, `co_activity`, optionally `shared_tokens`, `term_ref`.
 - Enter a path, toggle edge types, set min weight and limit, then Query.
 - Results show neighbor path, weight, count, and explanation.
 
-HTTP endpoints (for scripts):
+### Indexing the Graph
 
-- `/graph/edge-types`, `/graph/node?path=<rel>`, `/graph/neighbors?path=<rel>&types=...&min_w=...&limit=...`, `/graph/why?src=<a>&dst=<b>`, `/graph/search?q=...`, `/graph/metrics`.
-
-CLI:
-
-```bash
-gnosis-flow graph neighbors path/to/file.py --types dir_sibling,import_dep,co_activity --min-w 0.1 --limit 20
-gnosis-flow graph why path/to/a.py path/to/b.py
-```
-
-### Indexing (Pre‑warm Graph)
-
-The graph builds edges lazily. To speed up queries (especially on larger repos), you can pre‑warm it:
+The graph builds edges lazily. To speed up queries (especially on larger repos), you can pre‑warm the index:
 
 - Windows (recommended): run the indexing script with progress and ETA
 
@@ -164,6 +155,44 @@ Notes:
 - `dir_sibling` is computed on demand; no indexing needed.
 - `co_activity` is live only (based on file events as you work).
 - You can rerun the script anytime to refresh after large edits.
+
+### Searching the Graph
+
+You can search for files in the graph using the CLI or the HTTP API.
+
+**CLI:**
+
+```bash
+gnosis-flow graph search "your search query"
+```
+
+**HTTP API:**
+
+```bash
+curl -s "http://127.0.0.1:8766/graph/search?q=your%20search%20query" | jq
+```
+
+### Graph CLI Commands
+
+```bash
+gnosis-flow graph neighbors path/to/file.py --types dir_sibling,import_dep,co_activity --min-w 0.1 --limit 20
+gnosis-flow graph why path/to/a.py path/to/b.py
+```
+
+### Graph HTTP Endpoints
+
+- `/graph/edge-types`, `/graph/node?path=<rel>`, `/graph/neighbors?path=<rel>&types=...&min_w=...&limit=...`, `/graph/why?src=<a>&dst=<b>`, `/graph/search?q=...`, `/graph/metrics`.
+
+## MCP (optional)
+
+The separate MCP connector (`gnosis-flow-mcp`) exposes monitor control tools to MCP clients. Install with extras:
+
+```bash
+pip install -e .[mcp]
+gnosis-flow-mcp
+```
+
+Tools: `gf_status`, `gf_add_watch`, `gf_add_log`, `gf_stop`, `gf_rules`.
 
 ## Config
 
@@ -197,17 +226,6 @@ graph:
 - Excludes: `.gnosis-flow/`, `.git/`, `node_modules/`, `.venv/` are excluded by default.
 - Windows: if using the HTTP console, allow the app through the firewall when prompted.
 - Large files: snapshots (for +/- line counts) are taken only for small files to avoid heavy IO.
-
-## MCP (optional)
-
-The separate MCP connector (`gnosis-flow-mcp`) exposes monitor control tools to MCP clients. Install with extras:
-
-```bash
-pip install -e .[mcp]
-gnosis-flow-mcp
-```
-
-Tools: `gf_status`, `gf_add_watch`, `gf_add_log`, `gf_stop`, `gf_rules`.
 
 ## License
 
