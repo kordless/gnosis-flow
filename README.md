@@ -3,9 +3,9 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/release/python-390/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Flow Diagram](flow.png)
+It's a file and log monitor with browser and cli live consoles and in-process tools to enable an ai agent to take action when files are changed or logs contain certain information. it's an intelligent logging service, similar to loggly or splunk but much simplier and designed mostly for vibe coders to better understand their code by giving their LLMs more tools to do logging and root cause analysis faster. better tools, better coding sessions!
 
-Gnosis Flow is an async file/log monitor with a live console and in‑process tools. It watches your project, matches events via rules, and triggers actions (e.g., append to a file, echo, future safe edits), all without external services.
+![Flow Diagram](flow.png)
 
 ## Install
 
