@@ -1,8 +1,0 @@
-feat: Add graphing capabilities and update runtime
-
-This commit introduces a new graph visualization feature, including:
-- A new `graph.py` tool for generating graphs.
-- A new `graph` directory for graph-related code.
-- New tests for the graph feature.
-
-It also includes updates to the CLI, MCP, metrics, rules, and runtime.
