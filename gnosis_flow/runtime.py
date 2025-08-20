@@ -253,6 +253,7 @@ class ControlServer:
                 await self.server.serve_forever()
 
 
+
 class HttpStatusServer:
     """Minimal HTTP server to expose /status without extra deps."""
     def __init__(self, host: str, port: int, state: "MonitorState"):
@@ -260,6 +261,17 @@ class HttpStatusServer:
         self.port = port
         self.state = state
         self.server = None
+
+    async def start(self):
+        """Start the HTTP server (bind and listen)."""
+        # Bind a callback that passes this instance to the handler implementation
+        self.server = await asyncio.start_server(self.handle, self.host, self.port)
+
+    async def wait_closed(self):
+        """Serve forever until closed."""
+        if self.server:
+            async with self.server:
+                await self.server.serve_forever()
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
@@ -536,10 +548,10 @@ class HttpStatusServer:
                 if self.state and self.state.state_dir:
                     custom = self.state.state_dir / "console" / "console.js"
                     if custom.exists():
-                        js = custom.read_text(encoding="utf-8")
+                        js = _read_text_flexible(custom)
             except Exception:
                 pass
-            body = js.encode()
+            body = js.encode("utf-8")
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/javascript; charset=utf-8\r\n"
@@ -554,10 +566,10 @@ class HttpStatusServer:
                 if self.state and self.state.state_dir:
                     custom = self.state.state_dir / "console" / "console.css"
                     if custom.exists():
-                        css = custom.read_text(encoding="utf-8")
+                        css = _read_text_flexible(custom)
             except Exception:
                 pass
-            body = css.encode()
+            body = css.encode("utf-8")
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/css; charset=utf-8\r\n"
@@ -566,17 +578,17 @@ class HttpStatusServer:
             )
             writer.write(headers + body)
             handled = True
-        elif path.startswith("/console") or path == "/":
+        elif path.startswith("/console") or path == "/" :
             html = CONSOLE_HTML
             try:
                 if self.state and self.state.state_dir:
                     custom = self.state.state_dir / "console" / "index.html"
                     if custom.exists():
-                        html = custom.read_text(encoding="utf-8")
+                        html = _read_text_flexible(custom)
                 html = html.replace("{{TITLE}}", "Gnosis Flow · Live Console")
             except Exception:
                 pass
-            body = html.encode()
+            body = html.encode("utf-8")
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/html; charset=utf-8\r\n"
@@ -655,6 +667,7 @@ class HttpStatusServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+
 
     async def start(self):
         self.server = await asyncio.start_server(self.handle, self.host, self.port)
@@ -1326,11 +1339,11 @@ async def run_monitor(
     except Exception:
         state.graph = None
     ctrl = ControlServer(control_host, control_port, state)
-    await ctrl.start()
+    asyncio.create_task(ctrl.start())
     http_srv = None
     if http_enabled:
         http_srv = HttpStatusServer(http_host or control_host, http_port, state)
-        await http_srv.start()
+        asyncio.create_task(http_srv.start())
 
     for d in initial_dirs:
         await state.add_watch(d)
