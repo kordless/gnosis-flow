@@ -34,12 +34,17 @@ def _send_control_command(cmd: dict, host: str = "127.0.0.1", port: int = 8765, 
 def start(
     dir: Optional[str] = typer.Option(None, "--dir", help="Project directory to run in (defaults to CWD)", metavar="PATH"),
     log: Optional[str] = typer.Option(None, "--log", help="Log file to tail (can pass multiple)", metavar="FILE"),
-    host: str = typer.Option("127.0.0.1", help="Control server host"),
-    port: int = typer.Option(8765, help="Control server port"),
+    # Control (TCP) endpoint
+    control_host: str = typer.Option("127.0.0.1", "--control-host", help="Control (TCP) bind host for CLI commands"),
+    control_port: Optional[int] = typer.Option(None, "--control-port", help="Control (TCP) port for CLI commands (alias of --port)"),
+    port: int = typer.Option(8765, help="[Deprecated] Control (TCP) port. Use --control-port."),
+    # Web (HTTP) endpoint
+    web: bool = typer.Option(False, "--http", help="Expose a lightweight web console and HTTP API"),
+    web_host: Optional[str] = typer.Option(None, "--http-host", help="Web (HTTP) bind host. Defaults to --control-host."),
+    web_port: int = typer.Option(8766, "--http-port", help="Web (HTTP) port for console and API"),
+    # Runtime
     poll: float = typer.Option(1.0, help="Polling interval in seconds"),
     daemon: bool = typer.Option(False, "--daemon", help="Run in background and log to .gnosis-flow/monitor.log"),
-    http: bool = typer.Option(False, "--http", help="Expose a simple HTTP status endpoint on /status"),
-    http_port: int = typer.Option(8766, "--http-port", help="HTTP status port when --http is enabled"),
     yes: bool = typer.Option(False, "--yes", help="Auto-confirm prompts like adding .gnosis-flow to .gitignore"),
 ):
     """Run the monitor in single-project mode.
@@ -79,16 +84,21 @@ def start(
         sys.stdout = open(log_file, "a", buffering=1)
         sys.stderr = open(log_file, "a", buffering=1)
 
+    # Resolve ports/hosts with back-compat
+    ctrl_port = control_port if control_port is not None else port
+    http_host = web_host if web_host else control_host
+
     asyncio.run(
         run_monitor(
             initial_dirs=initial_dirs,
             initial_logs=initial_logs,
-            host=host,
-            port=port,
+            control_host=control_host,
+            control_port=ctrl_port,
             poll_interval=poll,
             state_dir=str(state),
-            http_enabled=http,
-            http_port=http_port,
+            http_enabled=web,
+            http_host=http_host,
+            http_port=web_port,
         )
     )
 
@@ -191,5 +201,20 @@ def graph_why(src: str, dst: str):
         gm = GraphManager(root=root, state_dir=state)
         res = gm.why(src, dst)
         typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+    except Exception as e:
+        typer.echo(json.dumps({"error": str(e)}))
+
+
+@graph_app.command("node")
+def graph_node(path: str):
+    """Show graph node info for a file (label, type, degree by edge type)."""
+    try:
+        from .util import project_root_from_cwd, ensure_state_dir
+        from .graph.store import GraphManager
+        root = project_root_from_cwd()
+        state = ensure_state_dir(root)
+        gm = GraphManager(root=root, state_dir=state)
+        info = gm.node_info(path)
+        typer.echo(json.dumps(info, indent=2, ensure_ascii=False))
     except Exception as e:
         typer.echo(json.dumps({"error": str(e)}))

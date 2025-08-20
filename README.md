@@ -62,6 +62,45 @@ gnosis-flow start --dir . --http
 
 This will start the Gnosis Flow monitor and the HTTP console. You can then access the live console at `http://127.0.0.1:8766/console`.
 
+CLI reference: see `CLI_COMMANDS.md` in this folder for all commands and options.
+
+### Ports and Endpoints
+
+```
+           CLI (TCP)                          Web (HTTP)
+   +------------------------+        +--------------------------+
+   |  Control Server        |        |  HTTP Server             |
+   |  --control-host:port   |        |  --http-host:port        |
+   |  default: 127.0.0.1:8765|       |  default: 127.0.0.1:8766 |
+   +-----------+------------+        +-------------+------------+
+               ^                                 ^
+               |                                 |
+   gnosis-flow status/add-watch/...    Browser: http://127.0.0.1:8766/console
+                                       API:     http://127.0.0.1:8766/graph/...
+```
+
+Tip: If you bind to `0.0.0.0`, use `127.0.0.1` in URLs.
+
+### Graph Panel (in the console)
+- Enter a file path, choose edge types (imports, siblings, similarity, co-activity, terms), set a min weight and limit, then Query.
+- Results list shows related files with type chips, weights, and an explanation.
+
+### Indexing (pre‑warm the graph)
+- Windows PowerShell with progress/ETA:
+  - `PowerShell -ExecutionPolicy Bypass -File .\scripts\index-graph.ps1`
+- Notes: co-activity is live only; siblings are on-demand; you can rerun after large edits.
+
+### HTTP examples
+- PowerShell:
+  - `Invoke-WebRequest "http://127.0.0.1:8766/graph/neighbors?path=gnosis_flow/cli.py&types=import_dep&min_w=0.1&limit=10" | Select-Object -Expand Content`
+- curl:
+  - `curl -s "http://127.0.0.1:8766/graph/edge-types"`
+
+### MCP tools (optional)
+- Use `gnosis-evolve/tools/flow_graph.py` as an MCP server; then call:
+  - `graph_set_base(base_url)` once per session
+  - `graph_neighbors`, `graph_why`, `graph_node`, `graph_edge_types`, `graph_search`
+
 ## The Gnosis Flow Ecosystem
 
 Gnosis Flow is part of a larger ecosystem of tools designed to help you build better software with AI. Check out our other projects:
@@ -76,3 +115,16 @@ We welcome contributions from the community! If you have an idea for a new featu
 ## License
 
 Gnosis Flow is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+### Customizing the Console (Templating)
+
+You can override the built‑in console by placing files under `.gnosis-flow/console/`:
+
+- `.gnosis-flow/console/index.html`  (HTML template)
+- `.gnosis-flow/console/console.css` (styles)
+- `.gnosis-flow/console/console.js`  (scripts)
+
+The server will serve these instead of the defaults. The HTML supports a minimal placeholder:
+
+- `{{TITLE}}` → replaced with `Gnosis Flow · Live Console`
+
+Restart the server after changing files. This lets you theme or extend the console without modifying the package.

@@ -1,0 +1,20 @@
+feat: Enhance web console and graph functionality
+
+This commit introduces several new features and improvements, including:
+
+- **Web Console:**
+  - Added a graph panel to the web console for visualizing code relationships.
+  - Implemented custom console theming by allowing users to override the default HTML, CSS, and JavaScript.
+- **Graph:**
+  - Added new CLI commands for querying the code relationship graph (`neighbors`, `why`, `node`).
+  - Implemented new HTTP endpoints for interacting with the graph API.
+- **Runtime:**
+  - Improved the handling of file and directory events.
+  - Added support for calculating file change rates and acceleration.
+- **CLI:**
+  - Added new commands for inspecting in-process tools (`tools list`, `tools info`).
+- **README:**
+  - Updated the README with information about the new features and improvements.
+
+**Known Issues:**
+- The graph panel in the web console is currently broken.

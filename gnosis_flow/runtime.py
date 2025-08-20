@@ -271,11 +271,17 @@ class HttpStatusServer:
         path, _, query = raw_path.partition("?")
         qs = {}
         if query:
-            for kv in query.split("&"):
-                if not kv:
-                    continue
-                k, _, v = kv.partition("=")
-                qs[k] = v
+            # Decode query properly (supports percent-encoding and + for spaces)
+            try:
+                from urllib.parse import parse_qsl
+                for k, v in parse_qsl(query, keep_blank_values=True):
+                    qs[k] = v
+            except Exception:
+                for kv in query.split("&"):
+                    if not kv:
+                        continue
+                    k, _, v = kv.partition("=")
+                    qs[k] = v
         handled = False
         if path.startswith("/status"):
             body = json.dumps({
@@ -525,7 +531,15 @@ class HttpStatusServer:
             writer.write(headers + body)
             handled = True
         elif path.startswith("/console.js"):
-            body = CONSOLE_JS.encode()
+            js = CONSOLE_JS
+            try:
+                if self.state and self.state.state_dir:
+                    custom = self.state.state_dir / "console" / "console.js"
+                    if custom.exists():
+                        js = custom.read_text(encoding="utf-8")
+            except Exception:
+                pass
+            body = js.encode()
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/javascript; charset=utf-8\r\n"
@@ -535,7 +549,15 @@ class HttpStatusServer:
             writer.write(headers + body)
             handled = True
         elif path.startswith("/console.css"):
-            body = CONSOLE_CSS.encode()
+            css = CONSOLE_CSS
+            try:
+                if self.state and self.state.state_dir:
+                    custom = self.state.state_dir / "console" / "console.css"
+                    if custom.exists():
+                        css = custom.read_text(encoding="utf-8")
+            except Exception:
+                pass
+            body = css.encode()
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/css; charset=utf-8\r\n"
@@ -545,7 +567,16 @@ class HttpStatusServer:
             writer.write(headers + body)
             handled = True
         elif path.startswith("/console") or path == "/":
-            body = CONSOLE_HTML.encode()
+            html = CONSOLE_HTML
+            try:
+                if self.state and self.state.state_dir:
+                    custom = self.state.state_dir / "console" / "index.html"
+                    if custom.exists():
+                        html = custom.read_text(encoding="utf-8")
+                html = html.replace("{{TITLE}}", "Gnosis Flow · Live Console")
+            except Exception:
+                pass
+            body = html.encode()
             headers = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/html; charset=utf-8\r\n"
@@ -1249,7 +1280,17 @@ def daemonize():
     os.chdir("/")
 
 
-async def run_monitor(initial_dirs: List[str], initial_logs: List[str], host: str, port: int, poll_interval: float, state_dir: Optional[str] = None, http_enabled: bool = False, http_port: int = 8766):
+async def run_monitor(
+    initial_dirs: List[str],
+    initial_logs: List[str],
+    control_host: str,
+    control_port: int,
+    poll_interval: float,
+    state_dir: Optional[str] = None,
+    http_enabled: bool = False,
+    http_host: Optional[str] = None,
+    http_port: int = 8766,
+):
     state = MonitorState(poll_interval=poll_interval, state_dir=state_dir)
     # Expose state dir for actions/metrics via env
     try:
@@ -1284,11 +1325,11 @@ async def run_monitor(initial_dirs: List[str], initial_logs: List[str], host: st
             )
     except Exception:
         state.graph = None
-    ctrl = ControlServer(host, port, state)
+    ctrl = ControlServer(control_host, control_port, state)
     await ctrl.start()
     http_srv = None
     if http_enabled:
-        http_srv = HttpStatusServer(host, http_port, state)
+        http_srv = HttpStatusServer(http_host or control_host, http_port, state)
         await http_srv.start()
 
     for d in initial_dirs:
@@ -1296,9 +1337,12 @@ async def run_monitor(initial_dirs: List[str], initial_logs: List[str], host: st
     for l in initial_logs:
         await state.add_log(l)
 
-    msg = f"Monitor running. Control server on {host}:{port}."
+    def _disp_host(h: str) -> str:
+        return "127.0.0.1" if h == "0.0.0.0" else h
+
+    msg = f"Monitor running. Control (TCP) on {_disp_host(control_host)}:{control_port}."
     if http_enabled:
-        msg += f" HTTP status on http://{host}:{http_port}/status."
+        msg += f" Web (HTTP) on http://{_disp_host(http_host or control_host)}:{http_port}/status."
     msg += " Press Ctrl-C to stop."
     print(msg)
     try:
